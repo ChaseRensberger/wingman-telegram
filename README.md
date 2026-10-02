@@ -1,7 +1,5 @@
 # Wingman Telegram
 
-**DONT USE THIS VIBECODED POS**
-
 This bot replies `Request recieved.` to text messages from your private Telegram account.
 It does not connect to Wingman or need Wingman credentials.
 Other users and group chats receive no reply.
