@@ -10,8 +10,27 @@ import (
 )
 
 type pendingReply struct {
-	ChatID int64  `json:"chat_id"`
-	Text   string `json:"text"`
+	ChatID    int64     `json:"chat_id"`
+	Text      string    `json:"text"`
+	RequestID string    `json:"request_id,omitempty"`
+	RunID     string    `json:"run_id,omitempty"`
+	Notified  bool      `json:"notified,omitempty"`
+	Replies   []string  `json:"replies,omitempty"`
+	Sent      int       `json:"sent,omitempty"`
+	Events    runEvents `json:"events,omitempty"`
+}
+
+type runEvents struct {
+	Seq      int64          `json:"seq,omitempty"`
+	Messages []replyMessage `json:"messages,omitempty"`
+	Status   string         `json:"status,omitempty"`
+	Error    string         `json:"error,omitempty"`
+}
+
+type replyMessage struct {
+	ID       string `json:"id"`
+	Revision int64  `json:"revision"`
+	Text     string `json:"text"`
 }
 
 type state struct {
@@ -19,6 +38,10 @@ type state struct {
 	Offset       int64         `json:"offset"`
 	LastUpdateAt int64         `json:"last_update_at,omitempty"`
 	Pending      *pendingReply `json:"pending,omitempty"`
+	Queue        []update      `json:"queue,omitempty"`
+	SessionID    string        `json:"session_id,omitempty"`
+	EventSeq     int64         `json:"event_seq,omitempty"`
+	Target       string        `json:"target,omitempty"`
 }
 
 type stateFile struct {
@@ -61,7 +84,7 @@ func openState(path, scope string) (*stateFile, state, error) {
 	}
 	if err == nil && current.Pending != nil {
 		p := current.Pending
-		if p.ChatID <= 0 || p.Text == "" {
+		if p.ChatID <= 0 || p.Text == "" || p.Sent < 0 || p.Sent > len(p.Replies) || p.Events.Seq < 0 {
 			err = fmt.Errorf("invalid pending reply in state")
 		}
 	}

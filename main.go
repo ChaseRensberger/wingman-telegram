@@ -58,6 +58,10 @@ func run(ctx context.Context, args []string) error {
 	if err != nil || userID <= 0 {
 		return fmt.Errorf("set TELEGRAM_USER_ID to your numeric Telegram user ID; use identify to find it")
 	}
+	w, consoleURL, err := configuredWingman()
+	if err != nil {
+		return err
+	}
 	me, err := tg.me(ctx)
 	if err != nil {
 		return err
@@ -68,8 +72,16 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer file.close()
+	target := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s\n%s\n%s\n%s", w.origin, w.agentID, w.modelRef, w.workdir))))
+	if current.Target != "" && current.Target != target {
+		return fmt.Errorf("state belongs to a different Wingman configuration; use a separate -state path")
+	}
+	current.Target = target
+	if err := file.save(current); err != nil {
+		return err
+	}
 	log.Printf("Bot @%s is ready for Telegram user %d. State: %s", me.Username, userID, *statePath)
-	b := &bot{telegram: tg, userID: userID, state: current, save: file.save}
+	b := &bot{telegram: tg, userID: userID, botID: me.ID, wingman: w, consoleURL: consoleURL, state: current, save: file.save}
 	if err := b.run(ctx); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("%w; state is preserved, restart the client to resume reply delivery", err)
 	}

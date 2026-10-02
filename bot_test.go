@@ -44,11 +44,11 @@ func privateUpdate(id int64, text string) update {
 
 func testBot() (*bot, *fakeTelegram) {
 	tg := &fakeTelegram{}
-	b := &bot{telegram: tg, userID: 42, save: func(state) error { return nil }}
+	b := &bot{telegram: tg, userID: 42, wingman: &fakeWingman{}, consoleURL: "https://console.example", save: func(state) error { return nil }}
 	return b, tg
 }
 
-func TestCannedReplyAndDuplicateDelivery(t *testing.T) {
+func TestTaskAndDuplicateDelivery(t *testing.T) {
 	b, tg := testBot()
 	ctx := context.Background()
 	u := privateUpdate(1, "Change the app")
@@ -58,8 +58,8 @@ func TestCannedReplyAndDuplicateDelivery(t *testing.T) {
 	if b.state.Pending == nil || len(tg.sent) != 0 {
 		t.Fatal("reply must be persisted before delivery")
 	}
-	if b.state.Pending.Text != "Request recieved." {
-		t.Fatal("reply does not match the requested text")
+	if b.state.Pending.Text != "Change the app" || b.state.Pending.RequestID == "" {
+		t.Fatal("task does not match the requested text")
 	}
 	if err := b.finish(ctx); err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestCannedReplyAndDuplicateDelivery(t *testing.T) {
 	if err := b.handle(ctx, u); err != nil {
 		t.Fatal(err)
 	}
-	if b.state.Pending != nil || !reflect.DeepEqual(tg.sent, []string{"Request recieved."}) {
+	if b.state.Pending != nil || len(tg.sent) != 2 || tg.sent[1] != "Done" {
 		t.Fatal("duplicate delivery repeated the reply")
 	}
 }
@@ -110,7 +110,7 @@ func TestCommandsAndAttachments(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(tg.sent) != 5 || !strings.Contains(tg.sent[0], "does not connect to Wingman") || tg.sent[2] != "Unknown command. Use /help." {
+	if len(tg.sent) != 5 || !strings.Contains(tg.sent[0], "Build agent") || tg.sent[2] != "Send a task first to create a session." {
 		t.Fatalf("incorrect command responses: %+v", tg.sent)
 	}
 	if tg.sent[4] != "Send a text message. Attachments are not supported." {
@@ -148,7 +148,7 @@ func TestRestartResumesPendingReply(t *testing.T) {
 	if err := restarted.handle(ctx, privateUpdate(1, "Hello")); err != nil {
 		t.Fatal(err)
 	}
-	if restarted.state.Pending != nil || !reflect.DeepEqual(newTelegram.sent, []string{"Request recieved."}) {
+	if restarted.state.Pending != nil || len(newTelegram.sent) != 2 || newTelegram.sent[1] != "Done" {
 		t.Fatal("pending reply was not restored")
 	}
 }
@@ -202,6 +202,7 @@ func TestPollingOverHTTPPersistsProgress(t *testing.T) {
 	defer cancel()
 	var offsets []int64
 	var sent []string
+	delivered := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -213,6 +214,11 @@ func TestPollingOverHTTPPersistsProgress(t *testing.T) {
 			if len(offsets) == 1 {
 				fmt.Fprint(w, `{"ok":true,"result":[{"update_id":5,"message":{"message_id":1,"from":{"id":42},"chat":{"id":42,"type":"private"},"text":"Hello"}}]}`)
 			} else {
+				select {
+				case <-delivered:
+				case <-r.Context().Done():
+					return
+				}
 				cancel()
 				fmt.Fprint(w, `{"ok":true,"result":[]}`)
 			}
@@ -232,10 +238,16 @@ func TestPollingOverHTTPPersistsProgress(t *testing.T) {
 	b.save = func(s state) error {
 		data, _ := json.Marshal(s)
 		durable = state{}
-		return json.Unmarshal(data, &durable)
+		if err := json.Unmarshal(data, &durable); err != nil {
+			return err
+		}
+		if durable.Offset == 6 && durable.Pending == nil {
+			close(delivered)
+		}
+		return nil
 	}
 	_ = b.run(ctx)
-	if !reflect.DeepEqual(offsets, []int64{0, 6}) || !reflect.DeepEqual(sent, []string{"Request recieved."}) || durable.Offset != 6 || durable.Pending != nil {
+	if !reflect.DeepEqual(offsets, []int64{0, 6}) || len(sent) != 2 || sent[1] != "Done" || durable.Offset != 6 || durable.Pending != nil {
 		t.Fatalf("polling did not persist progress: %+v %+v %+v", offsets, sent, durable)
 	}
 }
@@ -301,12 +313,19 @@ func TestRestartAfterInactivityAcceptsLowerUpdateID(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var offsets []int64
+	delivered := make(chan struct{})
+	b.save = func(s state) error {
+		if err := file.save(s); err != nil {
+			return err
+		}
+		if s.Offset == 6 && s.Pending == nil && len(s.Queue) == 0 {
+			close(delivered)
+		}
+		return nil
+	}
 	tg.poll = func(_ context.Context, offset int64, _ int) ([]update, error) {
 		offsets = append(offsets, offset)
 		if len(offsets) == 1 {
-			if !reflect.DeepEqual(tg.sent, []string{"old reply"}) {
-				t.Fatal("pending reply was not delivered before resetting")
-			}
 			data, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -315,10 +334,15 @@ func TestRestartAfterInactivityAcceptsLowerUpdateID(t *testing.T) {
 			if err := json.Unmarshal(data, &saved); err != nil {
 				t.Fatal(err)
 			}
-			if saved.Offset != 0 || saved.Pending != nil {
+			if saved.Offset != 0 {
 				t.Fatalf("reset not persisted before polling: %+v", saved)
 			}
 			return []update{privateUpdate(5, "Hello"), privateUpdate(5, "Hello")}, nil
+		}
+		select {
+		case <-delivered:
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 		cancel()
 		return nil, ctx.Err()
@@ -326,7 +350,7 @@ func TestRestartAfterInactivityAcceptsLowerUpdateID(t *testing.T) {
 	if err := b.run(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("unexpected run error: %v", err)
 	}
-	if !reflect.DeepEqual(offsets, []int64{0, 6}) || !reflect.DeepEqual(tg.sent, []string{"old reply", "Request recieved."}) {
+	if !reflect.DeepEqual(offsets, []int64{0, 6}) || len(tg.sent) != 3 || tg.sent[0] != "old reply" || tg.sent[2] != "Done" {
 		t.Fatalf("lower update was lost or duplicated: offsets=%v sent=%v", offsets, tg.sent)
 	}
 	if b.state.LastUpdateAt <= current.LastUpdateAt {
