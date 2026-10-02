@@ -1,0 +1,6 @@
+services:
+  telegram:
+    image: wingman-telegram:local
+    pull_policy: build
+    build:
+      context: .

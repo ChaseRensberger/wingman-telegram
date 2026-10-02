@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+/wingman-telegram
+*.test
+coverage.out
+coverage.html
+state.json
+state.json.lock
+.telegram-state-*

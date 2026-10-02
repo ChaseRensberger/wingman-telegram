@@ -1,0 +1,18 @@
+services:
+  telegram:
+    image: ${TELEGRAM_IMAGE:?Set TELEGRAM_IMAGE to your GHCR image}
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN}
+      TELEGRAM_USER_ID: ${TELEGRAM_USER_ID:-}
+    volumes:
+      - telegram-state:/data
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  telegram-state:
