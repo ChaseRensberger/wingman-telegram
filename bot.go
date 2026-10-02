@@ -179,9 +179,18 @@ func (b *bot) prepare(u update) {
 	m := u.Message
 	text := strings.TrimSpace(m.Text)
 	response := ""
+	command := ""
 	switch text {
 	case "/start", "/help":
-		response = "Send a task to Wingman's Build agent using GPT 6.1 Sol.\n/session shows the Console link. Approve tool requests in Console."
+		response = "Send a task to Wingman's Assist agent using GPT 6.1 Sol.\n/new starts a fresh conversation.\n/compact summarizes the current conversation context.\n/session shows the Console link.\nCommands wait for earlier tasks. Approve tool requests in Console."
+	case "/new":
+		command, response = "new", text
+	case "/compact":
+		if b.state.SessionID == "" {
+			response = "Send a task first. There is no conversation to compact."
+		} else {
+			command = "compact"
+		}
 	case "/session":
 		response = "Send a task first to create a session."
 		if b.state.SessionID != "" {
@@ -194,7 +203,7 @@ func (b *bot) prepare(u update) {
 			response = "Unknown command. Use /help."
 		}
 	}
-	b.state.Pending = &pendingReply{ChatID: m.Chat.ID, Text: response}
+	b.state.Pending = &pendingReply{ChatID: m.Chat.ID, Text: response, Command: command}
 	if response == "" {
 		b.state.Pending.Text = m.Text
 		b.state.Pending.RequestID = fmt.Sprintf("telegram:%d:%d:%d", b.botID, m.Chat.ID, u.ID)
@@ -204,6 +213,9 @@ func (b *bot) prepare(u update) {
 
 func (b *bot) finish(ctx context.Context) error {
 	p := b.state.Pending
+	if p.Command == "new" {
+		return b.finishNew(ctx)
+	}
 	if p.RequestID != "" {
 		return b.finishTask(ctx)
 	}
@@ -216,6 +228,23 @@ func (b *bot) finish(ctx context.Context) error {
 
 func (b *bot) sessionURL() string {
 	return b.consoleURL + "/console/sessions/" + b.state.SessionID
+}
+
+func (b *bot) finishNew(ctx context.Context) error {
+	p := b.state.Pending
+	if len(p.Replies) == 0 {
+		id, err := b.wingman.createSession(ctx)
+		if err != nil {
+			return err
+		}
+		b.state.SessionID, b.state.EventSeq = id, 0
+		p.Replies = []string{"Started a new conversation.\n" + b.sessionURL()}
+		// Save the session switch with its reply so delivery retries do not create another session.
+		if err := b.save(b.state); err != nil {
+			return err
+		}
+	}
+	return b.finishReplies(ctx)
 }
 
 func (b *bot) finishTask(ctx context.Context) error {
@@ -254,7 +283,11 @@ func (b *bot) finishTask(ctx context.Context) error {
 	}
 	if len(p.Replies) == 0 {
 		if !p.Notified {
-			if err := b.telegram.send(ctx, p.ChatID, "Wingman accepted your task. Watch and approve tools here:\n"+b.sessionURL()); err != nil {
+			notice := "Wingman accepted your task. Watch and approve tools here:\n"
+			if p.Command == "compact" {
+				notice = "Wingman accepted compaction. Watch here:\n"
+			}
+			if err := b.telegram.send(ctx, p.ChatID, notice+b.sessionURL()); err != nil {
 				return err
 			}
 			p.Notified = true
@@ -269,11 +302,19 @@ func (b *bot) finishTask(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if p.Command == "compact" && p.Events.Status == "completed" {
+			text = "Conversation compacted. Continue in the same session.\n" + b.sessionURL()
+		}
 		p.Replies = messageChunks(text)
 		if err := b.save(b.state); err != nil {
 			return err
 		}
 	}
+	return b.finishReplies(ctx)
+}
+
+func (b *bot) finishReplies(ctx context.Context) error {
+	p := b.state.Pending
 	for p.Sent < len(p.Replies) {
 		// Older state may contain whitespace-only chunks that Telegram rejects.
 		if strings.TrimSpace(p.Replies[p.Sent]) != "" {

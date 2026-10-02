@@ -264,7 +264,7 @@ func TestRestartDeliversSavedRepliesWithoutWingman(t *testing.T) {
 	if err := b.run(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("saved delivery failed: %v", err)
 	}
-	if len(tg.sent) != 2 || tg.sent[0] != "Remaining text" || !strings.Contains(tg.sent[1], "Build agent") || b.state.Pending != nil || len(b.state.Queue) != 0 {
+	if len(tg.sent) != 2 || tg.sent[0] != "Remaining text" || !strings.Contains(tg.sent[1], "Assist agent") || b.state.Pending != nil || len(b.state.Queue) != 0 {
 		t.Fatalf("blank chunks or outage blocked saved delivery: replies=%q state=%+v", tg.sent, b.state)
 	}
 }

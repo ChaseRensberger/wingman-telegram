@@ -29,7 +29,7 @@ func (w *fakeWingman) validate(context.Context) error { return w.validateErr }
 
 func (w *fakeWingman) createSession(context.Context) (string, error) {
 	w.created++
-	return "session-1", nil
+	return fmt.Sprintf("session-%d", w.created), nil
 }
 func (w *fakeWingman) admit(_ context.Context, _ string, p *pendingReply) (string, error) {
 	w.requests = append(w.requests, p.RequestID)
@@ -44,7 +44,7 @@ func (w *fakeWingman) result(ctx context.Context, session string, p *pendingRepl
 
 func testWingman(t *testing.T, server *httptest.Server) *wingman {
 	t.Helper()
-	w := &wingman{origin: server.URL, username: "wingman", password: "secret", agentID: "build-id", modelRef: "openai/gpt-6.1-sol", workdir: "/srv/projects"}
+	w := &wingman{origin: server.URL, username: "wingman", password: "secret", agentID: "assist-id", modelRef: "openai/gpt-6.1-sol", workdir: "/srv/projects"}
 	if err := w.connect(); err != nil {
 		t.Fatal(err)
 	}
@@ -82,8 +82,8 @@ func TestWingmanHTTPContract(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /ready":
 			fmt.Fprint(w, `{"ready":true,"version":"0.1.65"}`)
-		case "GET /agents/build-id":
-			fmt.Fprint(w, `{"name":"Build"}`)
+		case "GET /agents/assist-id":
+			fmt.Fprint(w, `{"name":"Assist"}`)
 		case "POST /sessions":
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -95,7 +95,7 @@ func TestWingmanHTTPContract(t *testing.T) {
 		case "POST /sessions/session-1/message":
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body["agent_id"] != "build-id" || body["model_ref"] != "openai/gpt-6.1-sol" || body["message"] != "  Implement feature\n" || body["request_id"] == "" {
+			if body["agent_id"] != "assist-id" || body["model_ref"] != "openai/gpt-6.1-sol" || body["message"] != "  Implement feature\n" || body["request_id"] == "" {
 				t.Errorf("wrong admission: %v", body)
 			}
 			requests = append(requests, body["request_id"])
@@ -290,7 +290,7 @@ func TestFollowupReusesSession(t *testing.T) {
 func TestModelConfigurationIsRequired(t *testing.T) {
 	t.Setenv("WINGMAN_URL", "https://wingman.example")
 	t.Setenv("WINGMAN_PASSWORD", "secret")
-	t.Setenv("WINGMAN_AGENT_ID", "build-id")
+	t.Setenv("WINGMAN_AGENT_ID", "assist-id")
 	t.Setenv("WINGMAN_WORKDIR", "/srv/projects")
 	t.Setenv("WINGMAN_MODEL_REF", "")
 	if _, _, err := configuredWingman(); err == nil {
@@ -340,8 +340,8 @@ func TestRejectedAdmissionReplySurvivesRestart(t *testing.T) {
 			fmt.Fprint(w, `{"ready":true}`)
 			return
 		}
-		if r.URL.Path == "/agents/build-id" {
-			fmt.Fprint(w, `{"name":"Build"}`)
+		if r.URL.Path == "/agents/assist-id" {
+			fmt.Fprint(w, `{"name":"Assist"}`)
 			return
 		}
 		if r.Method == "GET" {
@@ -390,7 +390,7 @@ func TestRejectedAdmissionReplySurvivesRestart(t *testing.T) {
 	if err := restarted.finish(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 1 || len(newTG.sent) != 2 || !strings.Contains(newTG.sent[0], "unknown model") || !strings.Contains(newTG.sent[1], "Build agent") || restarted.state.Pending != nil {
+	if requests != 1 || len(newTG.sent) != 2 || !strings.Contains(newTG.sent[0], "unknown model") || !strings.Contains(newTG.sent[1], "Assist agent") || restarted.state.Pending != nil {
 		t.Fatalf("rejection was retried or blocked subsequent commands: requests=%d replies=%v", requests, newTG.sent)
 	}
 }
@@ -405,8 +405,8 @@ func TestUncertainAdmissionKeepsPendingTask(t *testing.T) {
 					fmt.Fprint(w, `{"ready":true}`)
 					return
 				}
-				if r.URL.Path == "/agents/build-id" {
-					fmt.Fprint(w, `{"name":"Build"}`)
+				if r.URL.Path == "/agents/assist-id" {
+					fmt.Fprint(w, `{"name":"Assist"}`)
 					return
 				}
 				if r.Method == "GET" {
@@ -461,7 +461,7 @@ func TestAdmissionConflictReconcilesSavedRequest(t *testing.T) {
 				}
 				switch scenario {
 				case "accepted":
-					fmt.Fprint(w, `[{"id":"original-run","request_id":"saved-request","message":"Task","agent":{"id":"build-id","name":"Renamed Build","model_ref":"old/model"}}]`)
+					fmt.Fprint(w, `[{"id":"original-run","request_id":"saved-request","message":"Task","agent":{"id":"assist-id","name":"Renamed Assist","model_ref":"old/model"}}]`)
 				case "not accepted":
 					fmt.Fprint(w, `[]`)
 				case "different input":

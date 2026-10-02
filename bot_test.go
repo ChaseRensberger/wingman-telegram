@@ -110,7 +110,7 @@ func TestCommandsAndAttachments(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(tg.sent) != 5 || !strings.Contains(tg.sent[0], "Build agent") || tg.sent[2] != "Send a task first to create a session." {
+	if len(tg.sent) != 5 || !strings.Contains(tg.sent[0], "Assist agent") || tg.sent[2] != "Send a task first to create a session." {
 		t.Fatalf("incorrect command responses: %+v", tg.sent)
 	}
 	if tg.sent[4] != "Send a text message. Attachments are not supported." {

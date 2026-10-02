@@ -12,6 +12,7 @@ import (
 type pendingReply struct {
 	ChatID    int64     `json:"chat_id"`
 	Text      string    `json:"text"`
+	Command   string    `json:"command,omitempty"`
 	RequestID string    `json:"request_id,omitempty"`
 	RunID     string    `json:"run_id,omitempty"`
 	Notified  bool      `json:"notified,omitempty"`

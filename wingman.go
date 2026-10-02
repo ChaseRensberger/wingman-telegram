@@ -46,7 +46,7 @@ func configuredWingman() (*wingman, string, error) {
 	}
 	w.origin = origin
 	if w.password == "" || w.agentID == "" || w.modelRef == "" || !filepath.IsAbs(w.workdir) {
-		return nil, "", fmt.Errorf("set WINGMAN_PASSWORD, WINGMAN_AGENT_ID (Build), WINGMAN_MODEL_REF (GPT 6.1 Sol), and an absolute WINGMAN_WORKDIR on the server")
+		return nil, "", fmt.Errorf("set WINGMAN_PASSWORD, WINGMAN_AGENT_ID (Assist), WINGMAN_MODEL_REF (GPT 6.1 Sol), and an absolute WINGMAN_WORKDIR on the server")
 	}
 	console := os.Getenv("WINGMAN_CONSOLE_URL")
 	if console == "" {
@@ -104,8 +104,8 @@ func (w *wingman) validate(ctx context.Context) error {
 	if agent.JSON200 == nil {
 		return fmt.Errorf("Wingman returned no agent")
 	}
-	if agent.JSON200.Name != "Build" {
-		return fmt.Errorf("WINGMAN_AGENT_ID must select the Build agent, got %q", agent.JSON200.Name)
+	if agent.JSON200.Name != "Assist" {
+		return fmt.Errorf("WINGMAN_AGENT_ID must select the Assist agent, got %q", agent.JSON200.Name)
 	}
 	return nil
 }
@@ -123,13 +123,24 @@ func (w *wingman) createSession(ctx context.Context) (string, error) {
 	return result.JSON201.Id, nil
 }
 
+const compactAction = "compaction.compact"
+
 func (w *wingman) admit(ctx context.Context, id string, p *pendingReply) (string, error) {
 	if p.RequestID == "" {
 		return "", fmt.Errorf("Wingman admission requires a persisted request ID")
 	}
-	request := client.NewMessageAdmission(client.MessageSessionRequest{AgentId: w.agentID, ModelRef: &w.modelRef, Message: p.Text, RequestId: &p.RequestID})
 	result, err := wingmanRequest(ctx, w, func() (client.MessageSessionResponse, error) {
-		return w.sdk.AdmitMessage(ctx, id, request)
+		if p.Command == "compact" {
+			response, err := w.sdk.RunSessionActionWithResponse(ctx, id, compactAction, nil, client.ActionSessionRequest{AgentId: w.agentID, ModelRef: &w.modelRef, RequestId: &p.RequestID})
+			if err != nil {
+				return client.MessageSessionResponse{}, err
+			}
+			if response.JSON202 == nil {
+				return client.MessageSessionResponse{}, fmt.Errorf("Wingman returned no compaction admission")
+			}
+			return *response.JSON202, nil
+		}
+		return w.sdk.AdmitMessage(ctx, id, client.MessageSessionRequest{AgentId: w.agentID, ModelRef: &w.modelRef, Message: p.Text, RequestId: &p.RequestID})
 	})
 	var responseErr *client.APIError
 	if errors.As(err, &responseErr) {
@@ -147,7 +158,11 @@ func (w *wingman) admit(ctx context.Context, id string, p *pendingReply) (string
 			}
 			for _, run := range *runs.JSON200 {
 				if run.RequestId != nil && *run.RequestId == p.RequestID {
-					if run.Message != p.Text || run.Id == "" {
+					matches := run.Message == p.Text && run.Kind != "action"
+					if p.Command == "compact" {
+						matches = run.Kind == "action" && run.Action != nil && *run.Action == compactAction
+					}
+					if !matches || run.Id == "" {
 						return "", fmt.Errorf("Wingman request %s conflicts with a different saved input", p.RequestID)
 					}
 					return run.Id, nil

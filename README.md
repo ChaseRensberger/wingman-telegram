@@ -1,13 +1,13 @@
 # Wingman Telegram
 
-Send tasks to Wingman's Build agent from your private Telegram account.
+Send tasks to Wingman's Assist agent from your private Telegram account.
 Each task explicitly selects your configured GPT 6.1 Sol model.
-The bot uses one persistent session and returns the Console link and final text reply.
+The bot keeps the current session until you send `/new` and returns the Console link and final text reply.
 Other users and group chats receive no reply.
 
 ## Setup
 
-You need a Telegram bot token, Docker Compose, and a hosted Wingman service with the Build agent and model access.
+You need a Telegram bot token, Docker Compose, and a hosted Wingman service with the Assist agent and model access.
 For a published image, use `ghcr.io/<owner>/<repository>:latest` with lowercase names.
 For a local build, use the commands in the next section.
 
@@ -30,12 +30,12 @@ Before you start the bot, enter the Wingman configuration in `.env`:
 - `WINGMAN_URL`: The server origin, without `/console` or another path.
 - `WINGMAN_USERNAME`: The service username. The default is `wingman`.
 - `WINGMAN_PASSWORD`: The service password. Keep it outside Git.
-- `WINGMAN_AGENT_ID`: The ID of the hosted Build agent, not its name.
+- `WINGMAN_AGENT_ID`: The ID of the hosted Assist agent, not its name.
 - `WINGMAN_MODEL_REF`: The exact GPT 6.1 Sol model reference configured on the hosted server.
 - `WINGMAN_WORKDIR`: An existing absolute directory on the Wingman server, not inside the Telegram container.
 - `WINGMAN_CONSOLE_URL`: An optional browser-accessible origin when the API uses a private address.
 
-Before submitting a task, the bot waits for Wingman readiness, logs the server version, and makes sure that the agent is named `Build`.
+Before submitting a task, the bot waits for Wingman readiness, logs the server version, and makes sure that the agent is named `Assist`.
 Telegram polling and saved reply delivery can start while Wingman is unavailable.
 This version uses the Wingman Go SDK from release `v0.1.65`. Use the matching Wingman server release.
 It sends the model reference on every task, without a fallback to another model.
@@ -77,15 +77,23 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 
 - `/start` and `/help` explain task submission.
 - `/session` returns the Console link after the first task creates a session.
+- `/new` creates a fresh conversation in the configured working directory and returns its Console link.
+- `/compact` summarizes context in the current conversation through Wingman's compaction action, with the configured Assist agent and model.
 - Other slash commands return `Unknown command. Use /help.`
 - Attachments receive a message that asks for text instead.
 
-The bot forwards ordinary text unchanged to Build.
+The bot forwards ordinary text unchanged to Assist.
+The stock Assist agent only has web search and fetch tools.
+For coding tasks, enable file and shell tools on your hosted Assist agent.
 Include the public clone URL, feature instructions, and dev server requirements in your Telegram prompt.
-Build can clone `https://github.com/ChaseRensberger/roast.git` without GitHub credentials.
+With shell access, Assist can clone `https://github.com/ChaseRensberger/roast.git` without GitHub credentials.
 The client does not create pull requests, expose ports, or set up the preview server.
 The hosted server needs the app dependencies and a reachable preview address.
-Build's final reply can include the preview link.
+Assist's final reply can include the preview link.
+
+After `/new`, subsequent messages use the new session. Previous sessions remain available in Console, and project files remain in place.
+Compaction keeps the same session and its full transcript. It summarizes the context sent to the model.
+The bot reports when compaction finishes or fails. It requires an existing conversation and the Wingman compaction plugin.
 
 Tasks run one at a time. Commands and follow-up messages wait while a task runs.
 The bot keeps polling Telegram and saves these messages in order, including while a task waits for approval.
@@ -110,6 +118,7 @@ Uncertain submissions keep the same request ID across retries and restarts.
 If a retry conflicts after an agent edit or session move, the bot looks for the original run before reporting rejection.
 A reply can repeat if the process stops after Telegram accepts it but before the bot saves progress.
 Changing the Wingman origin, agent, model, or working directory requires a separate state file or volume.
+When switching from Build to Assist, use a separate state file or volume and set the hosted Assist agent ID.
 An existing canned-response state file keeps its Telegram progress and finishes any stored reply before the first task.
 Do not run `docker compose down -v`. It deletes delivery progress and can repeat replies.
 
